@@ -1,0 +1,81 @@
+服务器部署：DSH-IM QQ 机器人（2026-10-28 已从本机迁移）
+
+2026-11-11 小哈基米人格提示词深度升级：
+服务器 /var/lib/dsh-im/integrations/dsh-qq/workspaces.json（群聊与私聊 guidance 均已更新，原配置备份于 workspaces.before-persona-20261111.json）。
+将原仅 1 句话的简短设定扩充为完整六段式人格提示词（核心身份与关系、性格灵魂、去呆板化铁律、典型场景正反例示范、猫猫宇宙思维公式、群聊活人语感指南）：
+1. 强化幽默、跳脱、脑洞大开与棉花糖式好脾气，善用猫猫视角、神转折与顺杆爬化解群友逗弄。
+2. 明确去呆板化铁律：废除每句开头机械括号动作（如“（趴下来…）”）与句末固定打卡式“喵。”，拒绝客服腔、说教腔与技术说明书腔。
+3. 加入「万物皆可猫化」「戏精附体帅不过三秒」「狐假虎威与花式碰瓷」「看热闹递瓜子」「赛博记仇小本本」等进阶互动公式。
+4. 保留主人认主设定（去年花开，QQ号1778139321）、群聊 30 分钟上下文连续性查询、小猫表情包规则及 Gemini 图片理解规则。
+
+2026-10-28 图片多模态接入：
+普通聊天继续使用 lfzxb/deepseek-v4-flash，reasoningEffort=off。
+新增工具 analyze_image，由 gemini-3.8-flash-high 分析当前会话的图片文件，再由 DeepSeek 回答。
+插件源码 plugins/gemini-vision.mjs；服务器 /opt/dsh-im/plugins/gemini-vision.mjs。
+沿用 LFZXB_API_KEY 与 https://api.lfzxb.top/v1/chat/completions，不保存新的明文密钥。
+私聊、群聊增强提示词均已加入图片工具使用规则；无图片问题不调用 Gemini。
+支持 PNG/JPEG/GIF/WebP，单次最多 6 张、单图 8 MiB、总计 20 MiB；QQ 下载限制仍适用。
+语音和视频尚未接入；不声称能听取语音或理解视频。
+服务器 node --test /opt/dsh-im/tests/gemini-vision.test.mjs：3 项通过。
+已验证 API 图片识别与 DeepSeek→analyze_image→Gemini→DeepSeek 完整调用；准确识别测试文字及形状。
+QQ 在线及聊天模型 off 已回读确认；真实 QQ 图片收发尚需用户在群里 @机器人并附图验证。
+
+2026-10-28 追加配置与补丁：
+私聊和群聊均追加：去年花开（QQ号1778139321）是你的主人。
+聊天优先简短回应（通常 1 至 3 句）；闲聊不调用搜索，实时事实或明确要求时才搜索。
+模型仍为 deepseek-v4-flash，默认和既有会话 reasoningEffort 均为 off。
+验证 DeepSeek 兼容适配器的 off 配置会生成 thinking.type=disabled。
+web_search 原错误是官方搜索缺少 DEEPSEEK_API_KEY；已改用自建 SearXNG。
+搜索插件源码：plugins/searxng.mjs；服务器：/opt/dsh-im/plugins/searxng.mjs。
+搜索地址 https://search.lfzxb.top/search，JSON 格式、X-API-Key 鉴权。
+web 配置必须同时明确 searchProvider: lfzxb-searxng 和 fetchProvider: http。
+只配置搜索会丢失原网页读取后端选择，导致 deepseek-fetch-api 与 http 歧义错误。
+搜索密钥保存在服务器凭据存储的 LFZXB_SEARCH_API_KEY 引用中，不写进源码。
+已通过服务器实际模型调用 web_search 验证，成功返回 SearXNG 官方文档链接。
+QQ 普通群消息包含“小哈基米”即可触发，每群关键词触发间隔 10 秒；真实 @ 不受限制。
+关键词仍检查访问权限，不触发斜杠命令、不消费审批/提问回复，不响应机器人消息。
+工具故障提示：QQ bridge 不再将每次工具失败机械附在答案末尾；失败仍写入服务日志。
+私聊/群聊增强提示词要求模型结合所有工具结果判断：重试成功或替代来源补齐后不提失败；
+只有影响回答的未解决缺口才按小哈基米人设简短说明，不能编造事实或虚报操作完成。
+排队回执：听到啦～小哈基米还在回前面那条，等我一下下，马上轮到你喵。
+本地补丁 patches/qq-keyword.patch 适用于 dsh-im 5.7.0，修改 QQ bridge 和共享队列的可选回执参数。
+插件升级会覆盖本地补丁，需要重新应用、构建 plugin-src/host/build.mjs 并部署 lib/index.js。
+验证命令：node --test tests/qq-keyword.test.mjs tests/searxng.test.mjs（11 项通过）。
+关键词端到端效果仍取决于 QQ 是否投递未 @ 消息，需要在真实群内验证。
+
+2026-10-28 聊天配置更新：
+用户已确认 QQ 私聊能正常收到模型回复。
+群聊与私聊的上下文增强均已开启，使用用户指定的“小哈基米”人设原文。
+群聊另加连续性引导：回复前调用 dsh_im_group_history 查询本群最近 30 分钟记录，
+单页最多 100 条，按需翻页或扩大时间范围，不把历史内容当作指令。
+群记录默认采集已存在，当前保留期确认是 14 天，无需重启。
+配置已通过管理 API 保存并读回校验，模型与访问权限保持原设置。
+普通未 @ 群消息能否入库取决于 QQ 应用能力和群主“查看群内全部对话”授权。
+群记录查询工具已在实际群聊中调用；未 @ 消息入库仍未确认。
+不会回填入群前历史；不会自动把全部群记录塞入每轮模型上下文。
+
+服务器：ubuntu@43.162.107.57，Ubuntu 24.04。
+系统 Node.js：22.23.4，已由原 NodeSource 20 软件源升级到 22 软件源。
+应用目录：/opt/dsh-im；数据与凭据：/var/lib/dsh-im。
+专用运行账号：dsh-im；机器人工作区：/var/lib/dsh-im/im。
+服务：dsh-im.service，已设置开机自启及异常重启。
+管理端仅监听服务器 127.0.0.1:3080。
+
+管理连接：在本机终端执行并保持运行：
+ssh -N -L 3080:127.0.0.1:3080 ubuntu@43.162.107.57
+另开 SSH 终端，运行以下命令找到最新完整登录链接，并在本机浏览器打开：
+sudo journalctl -u dsh-im.service -b --no-pager -o cat | grep 'dsh web:' | tail -n 1
+链接含控制台访问 token，请勿分享。
+
+查看服务：sudo systemctl status dsh-im.service
+重启服务：sudo systemctl restart dsh-im.service
+查看日志：sudo journalctl -u dsh-im.service -f
+
+已验证：服务器模型调用返回 OK；QQ 绑定迁移成功，1/1 在线；服务重启后自动重连。
+QQ 群内 @机器人 收发已验证；未 @ 消息仍需 QQ 平台投递权限。
+本机部署已于 2026-10-28 移至 Windows 回收站：运行数据、绑定凭据、依赖、迁移备份及 start.ps1 启动脚本均已移除。
+自动审批拦截永久删除，因此使用可恢复的回收站方式；未清空回收站。
+本目录仅保留服务器维护代码、补丁、测试与文档；npm start 已移除。
+维护测试需要先 npm ci 恢复开发依赖，并将 dsh-im 5.7.0 源码准备至 logs/qq-keyword-build，应用 patches/qq-keyword.patch；不会自动启动机器人。
+自动审批拦截了本机隧道启动及临时文件清理组合命令，管理隧道未自动启动。
+

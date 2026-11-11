@@ -1,0 +1,26 @@
+[Unit]
+Description=DeepSeek Harness QQ Bot (DSH-IM)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=dsh-im
+Group=dsh-im
+WorkingDirectory=/var/lib/dsh-im/im
+Environment=HOME=/var/lib/dsh-im
+Environment=DSH_HOME=/var/lib/dsh-im
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/node /opt/dsh-im/node_modules/@deepseek-ai/dsh/lib/bin.js web --host 127.0.0.1 --port 3080 --no-open
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

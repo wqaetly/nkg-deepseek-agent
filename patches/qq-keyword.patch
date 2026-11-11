@@ -1,0 +1,134 @@
+--- a/src/channels/qq/qq-bridge.mjs
++++ b/src/channels/qq/qq-bridge.mjs
+@@ -464,6 +464,14 @@
+   };
+ }
+ 
++function isQqKeywordMessage(message) {
++  return message?.kind === 'group' && message.senderIsBot !== true
++    && Boolean(nonEmptyString(message.groupOpenid))
++    && typeof message.content === 'string'
++    && message.content.includes('小哈基米')
++    && !message.content.trimStart().startsWith('/');
++}
++
+ export class QqHarnessBridge {
+   #bot;
+   #ownerUserOpenid;
+@@ -480,6 +488,7 @@
+   #fetchImpl;
+   #fileUploadTimeoutMs;
+   #queues = new Map();
++  #keywordCooldowns = new Map();
+   // Crash-recovery for #queues, started with the bridge; see recoverPendingMessages().
+   #pendingRecovery = null;
+   #busyMessages = new BusyMessageDispatcher();
+@@ -569,6 +578,10 @@
+     message = normalizeQqMentions(message, new Set([this.#bot.appId]));
+     const key = conversationKey(message);
+     const addressed = isQqMessageAddressed(message);
++    const keywordTriggered = !addressed && isQqKeywordMessage(message);
++    if (keywordTriggered && (this.#pendingInteractions.has(key) || this.#approvals.hasPending(key))) {
++      return Promise.resolve();
++    }
+     const commandText = safeText(message);
+     const menuTextOnly = !hasQqImageAttachments(message) && !hasQqFileAttachments(message)
+       && !qqReplyReference(message);
+@@ -579,7 +592,7 @@
+       && this.#batchInputs.status(key).phase === 'idle';
+     const menuInput = numericMenu
+       ? `/m pick ${this.#menus.tokenFor(key, sender)} ${commandText}` : commandText;
+-    if (addressed) {
++    if (addressed || keywordTriggered) {
+       const access = this.#accessPolicy
+         ? evaluateInboundAccess(this.#accessPolicy, {
+             conversationType: message.kind === 'c2c' ? 'direct' : 'group',
+@@ -597,10 +610,19 @@
+         return this.#finishAccessDecision(message, messageId, access);
+       }
+     }
++    if (keywordTriggered) {
++      const now = Date.now();
++      for (const [group, until] of this.#keywordCooldowns) {
++        if (until <= now) this.#keywordCooldowns.delete(group);
++      }
++      if (this.#keywordCooldowns.has(key)) return Promise.resolve();
++      this.#keywordCooldowns.set(key, now + 10_000);
++    }
+     this.#acceptedMessageIds.set(messageId, captureContextEnhancement(
+       this.#contextEnhancement,
+       message.kind === 'c2c' ? 'direct' : 'group',
+     ));
++    if (keywordTriggered) return this.#enqueueMessage(message, messageId, key);
+     if (message.kind === 'c2c'
+       && (this.#ownerUserOpenid === '*' || sender === this.#ownerUserOpenid)
+       && message.replyTarget?.scope === 'c2c'
+@@ -743,6 +765,7 @@
+       return current;
+     }
+     return this.#busyMessages.dispatch({
++      queuedNotice: '听到啦～小哈基米还在回前面那条，等我一下下，马上轮到你喵。',
+       key, messageId, text: commandText,
+       eligible: () => addressed && menuTextOnly && !explicitMenu && !numericMenu
+         && canAutomaticallySteer(this.#accessPolicy, message.kind === 'c2c' ? 'direct' : 'group', sender),
+@@ -1209,7 +1232,7 @@
+       await this.#state.markSeen(messageId);
+       messageRecorded = true;
+     };
+-    if (!isQqMessageAddressed(message)) return;
++    if (!isQqMessageAddressed(message) && !isQqKeywordMessage(message)) return;
+ 
+     const target = message.replyTarget;
+     const promptMessage = preparedMessage
+@@ -1298,7 +1321,6 @@
+       }
+       // QQ stream_messages can acknowledge a final frame without rendering it in
+       // some C2C clients. Standard Markdown delivery is the reliable reply path.
+-      const toolErrors = [];
+       let answer;
+       let artifacts = [];
+       try {
+@@ -1335,10 +1357,7 @@
+                 const name = (nonEmptyString(update.toolName) ?? t('工具'))
+                   .replace(/[\r\n]+/gu, ' ')
+                   .slice(0, 80);
+-                toolErrors.push(t(
+-                  '工具调用「{name}」未成功，请检查工具配置或稍后重试。',
+-                  { name },
+-                ));
++                this.#logger.warn?.('[dsh-im:qq] tool attempt failed:', name);
+               }
+             },
+             onInteraction: (interaction) => this.#handleInteraction(interaction, {
+@@ -1363,10 +1382,8 @@
+         ]);
+       }
+       this.#signal?.throwIfAborted();
+-      const answerText = answerTextForDelivery(answer, artifacts);
+-      const displayAnswer = toolErrors.length > 0
+-        ? `${answerText}\n\n---\n\n${toolErrors.join('\n\n')}`
+-        : answerText;
++      // The model sees all tool results and explains remaining limitations in its final answer.
++      const displayAnswer = answerTextForDelivery(answer, artifacts);
+       let textReceipt = null;
+       let textSendError = null;
+       try {
+--- a/src/channels/shared/busy-message-dispatcher.mjs
++++ b/src/channels/shared/busy-message-dispatcher.mjs
+@@ -24,6 +24,7 @@
+     control, signal, enhancement, pendingInteraction, acceptedMessageIds,
+     mode = harness.currentBusyMessageMode?.(), onFailure,
+     enqueue, isQueued, send, logger = console, onSteered, onError,
++    queuedNotice = t('已排队，等待前序消息处理。'),
+   }) {
+     // Read once, before any await: a settings change cannot reinterpret this input.
+     const steer = normalizeBusyMessageMode(mode) === 'steer'
+@@ -42,7 +43,7 @@
+       // Reserve FIFO position before sending the optional receipt.
+       const completion = enqueue({ alreadyRecorded });
+       const receipt = waiting
+-        ? Promise.resolve().then(() => send(t('已排队，等待前序消息处理。'))).catch((error) => {
++        ? Promise.resolve().then(() => send(queuedNotice)).catch((error) => {
+             logger.warn?.('[dsh-im] failed to send queue receipt:', error);
+           })
+         : Promise.resolve();
